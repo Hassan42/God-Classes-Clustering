@@ -33,11 +33,7 @@ df["Is_God_Class"] = df["Method_Number"].apply(lambda x: "True" if x > (mean + (
 
 # Feature Vectore
 
-import javalang as jl
-import pandas as pd
-import os
 
-# tree = jl.parse.parse("package javalang.brewtab.com; class Test {int y,z; int m2(){} int m1(){y=x; m2();}}")
 
 inputPath = "PATH_TO/xerces2-j"
 
