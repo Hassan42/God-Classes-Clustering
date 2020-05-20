@@ -19,10 +19,7 @@ for path, dirs, files in os.walk(inputPath):
             sc.replace('\n', '')
             tree = jl.parse.parse(sc)
             for root, c in tree.filter(jl.tree.ClassDeclaration):
-                for root1, m in c.filter(jl.tree.MethodDeclaration):
-                    counter += 1
-                df.append({"File_Name": name, "Class_Name": c.name, "Method_Number": counter})
-                counter = 0
+                df.append({"File_Name": name, "Class_Name": c.name, "Method_Number": len(c.methods)})
 
 df = pd.DataFrame(df)
 
@@ -31,37 +28,58 @@ std = stat.stdev(df["Method_Number"].values)
 
 df["Is_God_Class"] = df["Method_Number"].apply(lambda x: "True" if x > (mean + (6 * std)) else "False")
 
+
 # Feature Vectore
 
 
 
 inputPath = "PATH_TO/xerces2-j"
-
-
 def getFields(Class):
     l = []
-    for root, v in Class.filter(jl.tree.VariableDeclarator):
-        l.append(v.name)
-    for root, m in Class.filter(jl.tree.MethodDeclaration):
-        l.append(m.name)
+    for f in Class.fields:
+        for x in f.declarators:
+            l.append(x.name)
     return l
 
 
 def getMethods(Class):
     l = []
-    for root, m in Class.filter(jl.tree.MethodDeclaration):
-        if not m.name in l:
-            l.append(m.name)
-    return l
+    objectM = []
+    for m in Class.methods:
+        l.append(m.name)
+        objectM.append(m)
+    return list(set(l)), objectM
 
 
 def getAccessedFieldsAndMethodsByMethods(Method):
     l = []
-    for root, am in Method.filter(jl.tree.MemberReference):
-        l.append(am.member)
-    for root, am in Method.filter(jl.tree.MethodInvocation):
-        l.append(am.member)
+    for body in m.body:
+        if(type(body) is jl.tree.StatementExpression):
+            if(type(body.expression) == jl.tree.Assignment):
+                l.append(body.expression.expressionl.member)
+            elif(type(body.expression) == jl.tree.MethodInvocation):
+                l.append(body.expression.member)   
     return l
+
+
+
+def getFieldsMethod(method):
+    fieldsReference = list(method.filter(jl.tree.MemberReference))
+    fieldsbyMethod = []
+    for i in fieldsReference:
+        fieldsbyMethod.append(i[1].member)
+    return fieldsbyMethod
+
+
+def getMethodsMethod(method):
+    methodInvocations = list(method.filter(jl.tree.MethodInvocation))
+    methodsbyMethod = []
+    for i in methodInvocations:
+        methodsbyMethod.append(i[1].member)
+    return methodsbyMethod
+
+
+
 
 
 GodClasses = df[df["Is_God_Class"] == "True"].File_Name.tolist()
@@ -78,61 +96,94 @@ for path, dirs, files in os.walk(inputPath):
             tree = jl.parse.parse(sc)
             for root, c in tree.filter(jl.tree.ClassDeclaration):
                 if c.name in GodClasses:
-                    df1 = pd.DataFrame(columns=getFields(c), index=getMethods(c))
-                    l2 = getFields(c)
-                    for root1, m in tree.filter(jl.tree.MethodDeclaration):
-                        l1 = getAccessedFieldsAndMethodsByMethods(m)
-                        l3 = []
+                    fields = getFields(c)
+                    methods, objmethod = getMethods(c)
+                    methods = list(set(methods))
+                    objmethod = list(set(objmethod))
+                    df1 = pd.DataFrame(columns=fields + methods, index=methods)
+                    df1.index.rename('Method_name', inplace=True)
+                    df1 = df1.fillna(0)
+                    print(c.name,df1.shape)
+                    l2 = fields + methods
+                    for m in objmethod:
+                        l1 = getFieldsMethod(m) + list(set(getMethodsMethod(m)))
                         for x in l2:
                             if x in l1:
-                                l3.append(1)
-                            else:
-                                l3.append(0)
-                        df1.loc[m.name] = l3
-                        l3 = []
-                    df1.to_csv('PATH_TO/FeatureVectors/' + c.name + '.csv')
+                                df1.loc[m.name][x] = 1 
+                    df1 = df1.loc[:, (df1 != 0).any(axis=0)]
+                    df1 = df1.reset_index()
+                    print(c.name,df1.shape)
+                    df1.to_csv('/Users/hassanatwi/Desktop/FeatureVectors/' + c.name + '.csv')
 # Clustering
 inputPath = "PATH_TO/FeatureVectors/"
+Klist = []
+Hlist = []
 for path, dirs, file in os.walk(inputPath):
     for name in file:
         if name.endswith(".csv"):
             with open(path + "/" + name, newline='') as csvfile:
                 rawData = list(csv.reader(csvfile))
             df = pd.read_csv(path + "/" + name)
-            data = [x[1:] for x in rawData[1:]]
-            data = [as_float_array(x[1:]) for x in rawData[1:]]
-
+            data = [as_float_array(x[2:]) for x in rawData[1:]]
+    
             kmax = 0
             kchosenK = 0
-            for i in range(2, 40):
+            li = []
+            total = 0
+            for i in range(2, 61):
                 kmeans = KMeans(n_clusters=i).fit(data)
+                TestDfk = {"Cluster_ID": kmeans.labels_.tolist(), "Method_Name": df['Method_name'].tolist()}
+                TestDfk = pd.DataFrame(TestDfk)
+                #for j in range(i):
+                    #total += TestDfk[TestDfk["Cluster_ID"] == j].describe().loc['count'][0]
+                #li.append([i,TestDfk.describe().loc['mean'][0]])
+                total = 0
                 score = silhouette_score(data, kmeans.labels_)
+                li.append([i,score])
                 if (kmax < score):
                     kmax = score
                     kchosenK = i
 
             hmax = 0
             hchosenK = 0
-            for i in range(2, 40):
+            Hli = []
+            total = 0
+            for i in range(2, 61):
                 model = AgglomerativeClustering(n_clusters=i, affinity='euclidean', linkage='complete').fit(data)
+                TestDfk = {"Cluster_ID": model.labels_.tolist(), "Method_Name": df['Method_name'].tolist()}
+                TestDfk = pd.DataFrame(TestDfk)
+                #for j in range(i):
+                    #total += TestDfk[TestDfk["Cluster_ID"] == j].describe().loc['count'][0]
+                #Hli.append([i,TestDfk.describe().loc['mean'][0]])
+                total = 0
                 score = silhouette_score(data, model.labels_)
+                Hli.append([i,score])
                 if (hmax < score):
                     hmax = score
                     hchosenK = i
-
+            print("Kmeans ", name,kchosenK, kmax)
+            print("    ")
+            print("AgglomerativeClustering ", name,hchosenK, hmax)
+            finalDf = {"Cluster_ID": kmeans.labels_.tolist(), "Method_Name": df['Method_name'].tolist()}
+            finalDf = pd.DataFrame(finalDf)
+            finalDf.to_csv('/Users/hassanatwi/Desktop/Cluster/KMeansCLuster_' + name)
+            finalDf = {"Cluster_ID": model.labels_.tolist(), "Method_Name": df['Method_name'].tolist()}
+            finalDf = pd.DataFrame(finalDf)
+            finalDf.to_csv('/Users/hassanatwi/Desktop/Cluster/HierarchicalCluster_' + name)
             if (kmax > hmax):
                 kmeans = KMeans(n_clusters=kchosenK).fit(data)
-                finalDf = {"Cluster_ID": kmeans.labels_.tolist(), "Method_Name": df['Unnamed: 0'].tolist()}
+                finalDf = {"Cluster_ID": kmeans.labels_.tolist(), "Method_Name": df['Method_name'].tolist()}
                 finalDf = pd.DataFrame(finalDf)
-                finalDf.to_csv('PATH_TO/Cluster/KMeansCLuster_' + name)
+                finalDf.to_csv('/Users/hassanatwi/Desktop/Cluster/KMeansCLuster_' + name)
             else:
                 model = AgglomerativeClustering(n_clusters=hchosenK, affinity='euclidean', linkage='complete').fit(data)
-                finalDf = {"Cluster_ID": model.labels_.tolist(), "Method_Name": df['Unnamed: 0'].tolist()}
+                finalDf = {"Cluster_ID": model.labels_.tolist(), "Method_Name": df['Method_name'].tolist()}
                 finalDf = pd.DataFrame(finalDf)
-                finalDf.to_csv('PATH_TO/Cluster/HierarchicalCluster_' + name)
+                finalDf.to_csv('/Users/hassanatwi/Desktop/Cluster/HierarchicalCluster_' + name)
+            Klist.append(li)
+            Hlist.append(Hli)
+            
 #Precisions and recall
-
-
 path = "PATH_TO/Cluster/"
 
 for path, dirs, file in os.walk(path):
